@@ -189,6 +189,13 @@ begin
   if not Result.IsSuccess then
     Exit;
 
+  // Enable Assign Primary privilege to start the process
+  Result := NtxAdjustPrivilege(NtxCurrentEffectiveToken,
+    SE_ASSIGN_PRIMARY_TOKEN_PRIVILEGE, SE_PRIVILEGE_ENABLED);
+
+  if not Result.IsSuccess then
+    Exit;
+
   // Spawn CMD using the token
   Result := AdvxCreateProcess(ProcessOptions, ProcessInfo);
 end;
