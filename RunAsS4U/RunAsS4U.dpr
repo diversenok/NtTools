@@ -43,16 +43,17 @@ begin
   writeln('RunAsS4U: run programs as other users without knowing passwords. ' +
     '(c) diversenok'#$D#$A);
 
-  // Using S4U requires the TCB privilege; try enabling it
-  Result := NtxAdjustPrivilege(NtxCurrentProcessToken, SE_TCB_PRIVILEGE,
-    SE_PRIVILEGE_ENABLED, True);
+  // Using S4U requires the TCB privilege; creating a process requires the
+  // Assign Primary privilege; try enabling them
+  Result := NtxAdjustPrivileges(NtxCurrentProcessToken, [SE_TCB_PRIVILEGE,
+    SE_ASSIGN_PRIMARY_TOKEN_PRIVILEGE], SE_PRIVILEGE_ENABLED, True);
 
   if not Result.IsSuccess then
     Exit;
 
   if Result.Status = STATUS_NOT_ALL_ASSIGNED then
   begin
-    // TCB is not available; we need to impersonate a SYSTEM token
+    // Privileges are not available; we need to impersonate a SYSTEM token
     Result := NtxAdjustPrivilege(NtxCurrentProcessToken,
       SE_IMPERSONATE_PRIVILEGE, SE_PRIVILEGE_ENABLED);
 
@@ -76,6 +77,13 @@ begin
     // Convert the token into an impersonation one
     Result := NtxDuplicateTokenLocal(hxToken, TokenImpersonation,
       SecurityImpersonation);
+
+    if not Result.IsSuccess then
+      Exit;
+
+    // Enable necessary privileges in the SYSTEM token
+    Result := NtxAdjustPrivileges(hxToken, [SE_TCB_PRIVILEGE,
+      SE_ASSIGN_PRIMARY_TOKEN_PRIVILEGE], SE_PRIVILEGE_ENABLED);
 
     if not Result.IsSuccess then
       Exit;
@@ -142,7 +150,18 @@ begin
   if not Result.IsSuccess then
     Exit;
 
-  if not MakeAdmin then
+  if MakeAdmin then
+  begin
+    // Make sure that the tokens we forced to be admin always get Administrators
+    // as their owner
+    Result := NtxSetSidToken(hxToken, TokenOwner, RtlxMakeSid(
+      SECURITY_NT_AUTHORITY, [SECURITY_BUILTIN_DOMAIN_RID,
+      DOMAIN_ALIAS_RID_ADMINS]));
+
+    if not Result.IsSuccess then
+      Exit;
+  end
+  else
   begin
     // Filter the token to strip admin groups and privileges
     Result := NtxFilterTokenInline(hxToken, LUA_TOKEN);
@@ -155,20 +174,20 @@ begin
 
     if not Result.IsSuccess then
       Exit;
-
-    // We also need to correct the default DACL after filtration;
-    // construct it based on the new owner and logon SID from the token
-    Result := NtxMakeDefaultDaclToken(hxToken, DefaultDacl);
-
-    if not Result.IsSuccess then
-      Exit;
-
-    // Adjust the default DACL
-    Result := NtxSetDefaultDaclToken(hxToken, DefaultDacl);
-
-    if not Result.IsSuccess then
-      Exit;
   end;
+
+  // Update the default DACL by constructing it based on the new owner and the
+  // logon SID from the token
+  Result := NtxMakeDefaultDaclToken(hxToken, DefaultDacl);
+
+  if not Result.IsSuccess then
+    Exit;
+
+  // Adjust the default DACL
+  Result := NtxSetDefaultDaclToken(hxToken, DefaultDacl);
+
+  if not Result.IsSuccess then
+    Exit;
 
   // Load the profile for the user
   Result := UnvxLoadProfile(hxProfileKey, hxToken);
@@ -182,16 +201,9 @@ begin
   ProcessOptions.Flags := [poNewConsole];
   ProcessOptions.hxToken := hxToken;
 
-  // Prepare the correct environment for the user
+  // Prepare the correct environment variables for the user
   Result := UnvxCreateUserEnvironment(ProcessOptions.Environment, hxToken,
     False, False);
-
-  if not Result.IsSuccess then
-    Exit;
-
-  // Enable Assign Primary privilege to start the process
-  Result := NtxAdjustPrivilege(NtxCurrentEffectiveToken,
-    SE_ASSIGN_PRIMARY_TOKEN_PRIVILEGE, SE_PRIVILEGE_ENABLED);
 
   if not Result.IsSuccess then
     Exit;
