@@ -21,6 +21,7 @@ uses
   NtUtils.Processes.Snapshots,
   NtUtils.Processes.Create,
   NtUtils.Processes.Create.Win32,
+  NtUtils.Environment,
   NtUtils.Environment.User,
   NtUtils.Lsa.Sid,
   NtUtils.WinUser,
@@ -196,10 +197,14 @@ begin
     Exit;
 
   ProcessOptions := Default(TCreateProcessOptions);
-  ProcessOptions.Application := USER_SHARED_DATA.NtSystemRoot +
-    '\system32\cmd.exe';
   ProcessOptions.Flags := [poNewConsole];
   ProcessOptions.hxToken := hxToken;
+
+  // Use the default command processor or fall back to CMD
+  if not RtlxExpandString(RtlxCurrentEnvironment, '%ComSpec%',
+    ProcessOptions.Application).IsSuccess then
+    ProcessOptions.Application := USER_SHARED_DATA.NtSystemRoot +
+      '\system32\cmd.exe';
 
   // Prepare the correct environment variables for the user
   Result := UnvxCreateUserEnvironment(ProcessOptions.Environment, hxToken,
